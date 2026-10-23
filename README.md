@@ -34,7 +34,7 @@ The hosted runtime runs on Cloudflare Workers with a single SQLite-backed Durabl
 
 ## Deployment
 
-Update `wrangler.jsonc` with your own account settings and exact HTTPS origin before deploying; the repository file is a template rather than the operator's live configuration. See `docs/deployment.md` for required bindings and operational rules. The hosted review URL is https://common-ground-test.studio-gennai1.workers.dev/ . Host invitation keys and live Qloo activation windows are coordinated separately for review.
+Update `wrangler.jsonc` with your own account settings and exact HTTPS origin before deploying; the repository file is a template rather than the operator's live configuration. See `docs/deployment.md` for required bindings and operational rules. The hosted review URL is https://common-ground-test.studio-gennai1.workers.dev/ . Standard host invitations are single-use. Private review invitations can create a bounded number of rooms until a fixed expiry; they do not open other rooms or enable Qloo. Live Qloo activation remains a separately arranged, operator-enabled window of at most two hours, with startup off. See [judging instructions](docs/judging.md).
 
 ## License
 

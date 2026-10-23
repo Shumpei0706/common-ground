@@ -188,7 +188,7 @@ export const copy = {
   "betaDeleteTitle": "Confirm permanent deletion",
   "betaDeleted": "Server room data permanently deleted.",
   "betaHomeJoinHint": "Join with a full invitation link, or enter a room code plus its invitation key.",
-  "betaInviteHint": "Obtain a single-use host invitation from the operator.",
+  "betaInviteHint": "Enter the host invitation key provided by the operator.",
   "betaInviteInvalid": "This invitation is invalid, already used, replaced, or expired.",
   "betaInviteLabel": "Host invitation key",
   "betaInviteLocked": "New joins are stopped. Existing joined participants keep access.",

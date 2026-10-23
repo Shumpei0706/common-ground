@@ -10,6 +10,7 @@ import {OFFICIAL_ORIGIN,QLOO_HOME_DIR} from './qloo-installation.mjs';
 export const POLICY_VERSION='2026-10-21-beta-1';
 const token=()=>randomBytes(32).toString('base64url');
 const validToken=value=>typeof value==='string'&&/^[A-Za-z0-9_-]{43}$/.test(value);
+const usableReviewInvite=(v,now)=>v&&Number.isSafeInteger(v.issuedAt)&&Number.isSafeInteger(v.expires)&&v.expires>now&&v.issuedAt<=now&&v.expires<=v.issuedAt+21*86400000&&Number.isInteger(v.maxRooms)&&v.maxRooms>=1&&v.maxRooms<=12&&Number.isInteger(v.usedRooms)&&v.usedRooms>=0&&v.usedRooms<v.maxRooms;
 const loopback=ip=>['127.0.0.1','::1','::ffff:127.0.0.1'].includes(ip);
 const cleanText=(v,max=200)=>typeof v==='string'&&v.trim().length>0&&v.length<=max&&!/[\x00-\x1f\x7f<>]/.test(v)&&!/REPLACE|TODO|example\.(com|org)|未設定/i.test(v);
 export function validateDeployment(input,{preview=false}={}){
@@ -45,7 +46,7 @@ export class BetaSecurity{
   deny(validToken(state.policy().betaSecurity.ledgerId),503,'BETA_STATE_INVALID','Invalid ledger identity.');state.configure({sessionHours:2});
  }
  validateInput(data){const check=value=>{if(typeof value!=='string')return;const text=value.replace(/\b(?:19|20)\d{2}\s*[-–—]\s*(?:19|20)\d{2}\b/g,'year range');deny(!/(?:https?:\/\/|www\.|[\w.+-]+@[\w.-]+\.[a-z]{2,}|(?:\+?\d[\d ()-]{7,}\d))/i.test(text),400,'PERSONAL_DATA_REJECTED','Do not enter contact details or links.');};check(data.name);check(data.text);check(data.title);for(const work of Array.isArray(data.works)?data.works:[])check(work?.title);for(const word of Array.isArray(data.elements)?data.elements:[])check(word);}
- sweep(){const s=this.state;s.transaction(()=>{const b=s.policy().betaSecurity,invites=b.invites.filter(x=>!x.used&&x.expires>s.now());if(invites.length!==b.invites.length)this.writeBeta({...b,invites});});}
+ sweep(){const s=this.state;s.transaction(()=>{const b=s.policy().betaSecurity,invites=b.invites.filter(x=>!x.used&&x.expires>s.now()),reviewInvites=(b.reviewInvites||[]).filter(x=>x.expires>s.now());if(invites.length!==b.invites.length||reviewInvites.length!==(b.reviewInvites||[]).length)this.writeBeta({...b,invites,reviewInvites});});}
  publicInfo(){const c=this.config;return {enabled:true,preview:c.preview,policyVersion:POLICY_VERSION,operatorName:c.operatorName,contact:c.contact,hostingProvider:c.hostingProvider,hostingRegion:c.hostingRegion,logRetentionDays:c.logRetentionDays,backupRetentionDays:c.backupRetentionDays};}
  origin(req){
   if(this.config.preview){deny(!req.headers.forwarded&&!Object.keys(req.headers).some(k=>k.startsWith('x-forwarded-')),403,'PROXY_DENIED','Preview mode does not accept forwarded traffic.');const host=req.headers.host;deny([`127.0.0.1:${req.socket.localPort}`,`localhost:${req.socket.localPort}`].includes(host),403,'HOST_DENIED','Invalid origin.');return 'http://'+host;}
@@ -78,7 +79,14 @@ export class BetaSecurity{
   deny(typeof req.url==='string'&&req.url.length<=2048&&!/[\x00-\x20\x7f]/.test(req.url)&&req.url.startsWith('/')&&!req.url.startsWith('//'),400,'PATH_INVALID','Invalid path.');
   this.rate(req,'requests',3000,20000);if(req.method==='POST')this.rate(req,'writes',300,4000);
  }
- validateHostInvite(value){deny(validToken(value)&&this.state.policy().betaSecurity.invites.some(x=>same(x.digest,hash(value))&&x.expires>this.state.now()),403,'INVITE_INVALID','A valid host invitation is required.');}
+ reviewInvite(value,b=this.state.policy().betaSecurity){return validToken(value)?(b.reviewInvites||[]).find(x=>usableReviewInvite(x,this.state.now())&&same(x.digest,hash(value))):null;}
+ validateHostInvite(value){const b=this.state.policy().betaSecurity;deny(validToken(value)&&(b.invites.some(x=>!x.used&&same(x.digest,hash(value))&&x.expires>this.state.now())||this.reviewInvite(value,b)),403,'INVITE_INVALID','A valid host invitation is required.');}
+ issueReviewInvite({expiresAt,maxRooms=8}={}){
+  const s=this.state;deny(Number.isSafeInteger(expiresAt)&&expiresAt>s.now()&&expiresAt<=s.now()+21*86400000&&Number.isInteger(maxRooms)&&maxRooms>=1&&maxRooms<=12,400,'INVITE_INVALID','Use a finite review expiry and at most 12 rooms.');
+  const value=token();s.transaction(()=>{const b=s.policy().betaSecurity,reviewInvites=(b.reviewInvites||[]).filter(x=>x.expires>s.now());deny(reviewInvites.length<3,429,'INVITE_LIMIT','Too many review invitations.');reviewInvites.push({digest:hash(value),issuedAt:s.now(),expires:expiresAt,maxRooms,usedRooms:0});this.writeBeta({...b,reviewInvites});});return value;
+ }
+ revokeReviewInvites(){const s=this.state;s.transaction(()=>{const b=s.policy().betaSecurity;this.writeBeta({...b,reviewInvites:[]});});}
+
  issueInvite({expiresInMs=3600000}={}){
   deny(Number.isInteger(expiresInMs)&&expiresInMs>0&&expiresInMs<=86400000,400,'INVITE_INVALID','Invalid invitation expiry.');
   const value=token(),s=this.state;s.transaction(()=>{const p=s.policy(),b=p.betaSecurity,invites=b.invites.filter(x=>x.expires>s.now()&&!x.used);deny(invites.length<100,429,'INVITE_LIMIT','Too many invitations.');invites.push({digest:hash(value),expires:s.now()+expiresInMs,used:false});this.writeBeta({...b,invites});});return value;
@@ -88,7 +96,7 @@ export class BetaSecurity{
   this.validateInput(data);deny(data.flow==='cards'&&!data.sample,400,'BETA_FLOW_REQUIRED','Only the current workshop is available.');
   deny(data.policyVersion===POLICY_VERSION,400,'POLICY_REQUIRED','Review the current terms and privacy notice.');
   deny(validToken(data.hostInvite),403,'INVITE_INVALID','A valid host invitation is required.');
-  const s=this.state;return s.transaction(()=>{const b=s.policy().betaSecurity,invite=b.invites.find(x=>same(x.digest,hash(data.hostInvite))&&!x.used&&x.expires>s.now());deny(invite,403,'INVITE_INVALID','A valid host invitation is required.');const r=create();r.beta={key:token(),generation:1,admissions:[],locked:false,policyVersion:POLICY_VERSION};s.saveRoom(r);this.writeBeta({...b,invites:b.invites.filter(x=>x!==invite)});return r;});
+  const s=this.state;return s.transaction(()=>{const b=s.policy().betaSecurity,invite=b.invites.find(x=>same(x.digest,hash(data.hostInvite))&&!x.used&&x.expires>s.now()),review=this.reviewInvite(data.hostInvite,b);deny(invite||review,403,'INVITE_INVALID','A valid host invitation is required.');const r=create();r.beta={key:token(),generation:1,admissions:[],locked:false,policyVersion:POLICY_VERSION};s.saveRoom(r);if(invite)this.writeBeta({...b,invites:b.invites.filter(x=>x!==invite)});else this.writeBeta({...b,reviewInvites:b.reviewInvites.map(x=>x===review?{...x,usedRooms:x.usedRooms+1}:x)});return r;});
  }
  roomAccess(r,session){return !!session?.digest&&r?.flow==='cards'&&!!r.beta&&(hasHostAccess(r,session)||r.members.some(m=>m.browser===session.digest)||(r.beta.admissions||[]).includes(session.digest));}
  requireAccess(r,session){deny(this.roomAccess(r,session),403,'ROOM_ACCESS_REQUIRED','Open the full participant invitation from the host.');}

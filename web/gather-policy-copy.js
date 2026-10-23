@@ -91,7 +91,7 @@ export const policies = {
       },
       {
         "body": [
-          "Common Ground is an invite-only experimental workshop application. Creating a room requires a single-use host invitation from the operator. Joining a room requires the host's full invitation link or the room code plus the participant invitation key. By creating or joining a room, you agree to these Terms and acknowledge the Privacy Notice.",
+          "Common Ground is an invite-only experimental workshop application. Creating a room requires a valid host invitation from the operator. Joining a room requires the host's full invitation link, or the room code plus the participant invitation key. By creating or joining a room, you agree to these Terms and acknowledge the Privacy Notice.",
           "Participation is restricted to users aged 18 and older as an operator beta restriction. Separate third-party age or commercial terms from Qloo remain subject to operator and legal review before release."
         ],
         "heading": "Invite-Only Beta & 18+ Operating Restriction"
@@ -210,7 +210,7 @@ export const policies = {
       },
       {
         "body": [
-          "Common Groundは招待制の実験的ワークショップアプリです。ルーム作成には運営者が発行する1回限りのホスト招待が必要です。ルームへの参加には、ホストの招待リンク全体、またはルームコードと参加者招待キーの両方が必要です。ルームの作成または参加により、本規約に同意しプライバシー通知を確認したものとみなされます。",
+          "Common Groundは招待制の実験的ワークショップアプリです。ルームの作成には、運営者が発行する有効なホスト招待が必要です。ルームへの参加には、ホストの招待リンク全体、またはルームコードと参加者招待キーの両方が必要です。ルームの作成または参加により、本規約に同意し、プライバシー通知を確認したものとみなされます。",
           "運営上のベータ制限として、利用は18歳以上に制限されています。これとは別に、Qlooに関する年齢条件や商用利用条件の確認はリリース前の運営・法務確認事項となります。"
         ],
         "heading": "招待制ベータおよび18歳以上制限"

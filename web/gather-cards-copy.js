@@ -188,7 +188,7 @@ export const copy = {
   "betaDeleteTitle": "完全削除の確認",
   "betaDeleted": "サーバー上のルームデータを完全に削除しました。",
   "betaHomeJoinHint": "招待リンク全体を開くか、ルームコードと招待キーの両方を入力して参加してください。",
-  "betaInviteHint": "運営者から1回限りのホスト招待を取得してください。",
+  "betaInviteHint": "運営者から受け取ったホスト招待キーを入力してください。",
   "betaInviteInvalid": "この招待は無効、使用済み、差し替え済み、または期限切れです。",
   "betaInviteLabel": "ホスト招待キー",
   "betaInviteLocked": "新規参加は停止されています。すでに参加しているメンバーは引き続きアクセスできます。",
