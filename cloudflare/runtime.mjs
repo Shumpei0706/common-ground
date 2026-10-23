@@ -16,8 +16,8 @@ export async function readBody(request,maximum=16384){
  let data;try{data=JSON.parse(new TextDecoder().decode(Buffer.concat(parts)));}catch{throw new GuardError(400,'INPUT_INVALID','Check the input.');}deny(data&&typeof data==='object'&&!Array.isArray(data),400,'INPUT_INVALID','Check the input.');return data;
 }
 
-export function cloudRuntime(db,{id,origin,operatorName,contact,baselineHash,apiKey,fetchImpl,now=()=>Date.now()}={}){
- const state=new CloudState(db,{id,origin,baselineHash,now});
+export function cloudRuntime(db,{id,origin,operatorName,contact,baselineHash,apiKey,fetchImpl,versionId=null,now=()=>Date.now()}={}){
+ const state=new CloudState(db,{id,origin,baselineHash,versionId,now});
  // Bootstrap only this namespace's own private invite secret; never copy local secrets/room data.
  new BetaSecurity(state,{preview:true});if(!state.policy().cloudImport)state.configure({enabled:false,total:1000,daily:200,room:30});
  const beta=new BetaSecurity(state,{publicOrigin:origin,statePath:'/cloudflare/durable-ledger',qlooHome:'/cloudflare/no-qloo-credential',operatorName,contact,hostingProvider:'Cloudflare Workers and Durable Objects',hostingRegion:'Cloudflare global network',logRetentionDays:0,backupRetentionDays:30,reviewedPolicyVersion:POLICY_VERSION,expectedLedgerId:state.policy().betaSecurity.ledgerId,minimumLifetimeSpent:214,ledgerBaselineVerified:true},{validate:c=>{let url;try{url=new URL(c.publicOrigin);}catch{}deny(url&&url.protocol==='https:'&&url.origin===c.publicOrigin&&!url.username&&!url.password&&!/REPLACE|localhost|example/i.test(url.hostname)&&typeof c.operatorName==='string'&&c.operatorName.length>0&&c.operatorName.length<=200&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(c.contact),503,'DEPLOYMENT_INVALID','Complete cloud deployment settings.');return {...c,preview:false};}});

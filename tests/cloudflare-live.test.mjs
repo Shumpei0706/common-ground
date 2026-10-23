@@ -10,12 +10,12 @@ import {createNativeTransport} from '../cloudflare/qloo-fetch.mjs';
 import {QlooGuard} from '../scripts/qloo-guard.mjs';
 import {cloudRuntime} from '../cloudflare/runtime.mjs';
 const now=Date.parse('2026-10-22T03:00:00Z'),origin='https://workshop.test',id='b'.repeat(64),apiKey='fictional-private-key';
-function fixture(){
+function fixture({versionId=null}={}){
  const source=new SecurityState(':memory:',{now:()=>now});new BetaSecurity(source,{preview:true});
  for(let n=1;n<=214;n++)source.db.prepare('INSERT INTO attempts(id,job,room,day,start,state,result) VALUES (?,?,?,?,?,?,?)').run(n,hash('historical-'+n),'OLD123','2026-10-15',Date.parse('2026-10-15T00:00:00Z')+n*1000,'success',JSON.stringify({participantName:'DO_NOT_EXPORT',entities:[{title:'PRIVATE_HISTORY'}]}));
  const manifest=retireAndExport(source,{targetOrigin:origin,targetObjectId:id}),baselineHash=hash(JSON.stringify(manifest)),db=new DatabaseSync(':memory:');let clock=now;
- const options={id,origin,baselineHash,now:()=>clock};let state=new CloudState(db,options);new BetaSecurity(state,{preview:true});
- return {source,manifest,db,get state(){return state;},baselineHash,import(){return state.importBudget(manifest);},arm(extra={}){return state.arm({confirmation:'ARM_CLOUD_QLOO_CUMULATIVE_1000',bootNonce:state.bootNonce,manifestHash:baselineHash,observedSpent:state.usage('').total,observedDaily:state.usage('').daily,ceiling:1000,daily:200,room:30,expiresAt:clock+7200000,...extra});},room(code='ABCDEF'){const r={id:code,created:clock,snapshot:[]};state.saveRoom(r);state.grant(code,snapshotHash(r),{cap:30,expires:clock+7200000});return {room:code,snapshot:snapshotHash(r)};},tick(ms){clock+=ms;},restart(){state=new CloudState(db,options);},close(){source.close();db.close();}};
+ const options={id,origin,baselineHash,versionId,now:()=>clock};let state=new CloudState(db,options);new BetaSecurity(state,{preview:true});
+ return {source,manifest,db,get state(){return state;},baselineHash,import(){return state.importBudget(manifest);},arm(extra={}){return state.arm({confirmation:'ARM_CLOUD_QLOO_CUMULATIVE_1000',bootNonce:state.bootNonce,manifestHash:baselineHash,observedSpent:state.usage('').total,observedDaily:state.usage('').daily,ceiling:1000,daily:200,room:30,expiresAt:clock+7200000,...extra});},room(code='ABCDEF'){const r={id:code,created:clock,snapshot:[]};state.saveRoom(r);state.grant(code,snapshotHash(r),{cap:30,expires:clock+7200000});return {room:code,snapshot:snapshotHash(r)};},tick(ms){clock+=ms;},restart(nextVersion=options.versionId){options.versionId=nextVersion;state=new CloudState(db,options);},close(){source.close();db.close();}};
 }
 const empty=()=>new Response(JSON.stringify({results:[]}),{status:200});
 const query={operation:'search',kind:'movie',text:'Fictional film',take:5};
@@ -87,4 +87,45 @@ test('display counter cache cannot authorize spending past the exact cumulative 
 
 test('display counts refresh on timeout, UTC day change and runtime restart',()=>{
  const f=fixture();try{f.import();const r=f.room();const a=f.state.displayUsage(r.room);f.state.displayCounts.get(r.room).value.total=0;f.tick(60000);assert.equal(f.state.displayUsage(r.room).total,a.total);f.tick(86400000);assert.equal(f.state.displayUsage(r.room).daily,0);f.restart();assert.equal(f.state.displayCounts,undefined);assert.equal(f.state.displayUsage(r.room).total,214);}finally{f.close();}
+});
+
+const reviewVersion='11111111-1111-4111-8111-111111111111',nextReviewVersion='22222222-2222-4222-8222-222222222222';
+const reviewArm=(f,extra={})=>f.arm({mode:'invited-review',versionId:reviewVersion,ceiling:477,expiresAt:now+7*86400000,...extra});
+
+test('invited review survives same-version eviction and exceeds two hours only within approved bounds',()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();assert.equal(reviewArm(f).enabled,true);const nonce=f.state.bootNonce;f.tick(7200001);f.restart();assert.notEqual(f.state.bootNonce,nonce);assert.equal(f.state.livePermitted(),true);assert.equal(f.state.operatorStatus().activationMode,'invited-review');assert.equal(f.state.operatorStatus().versionId,reviewVersion);assert.equal(f.state.usage('').total,214);}finally{f.close();}
+});
+
+test('session mode remains boot-bound even when a valid Worker version is configured',()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();assert.equal(f.arm().enabled,true);f.restart();assert.equal(f.state.livePermitted(),false);assert.equal(f.state.policy().publicBetaAuthorization,null);assert.equal(f.state.usage('').total,214);}finally{f.close();}
+});
+
+test('invited review requires the server version and rejects unapproved ceilings, modes and deadlines',()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();for(const bad of [{versionId:null},{versionId:nextReviewVersion},{ceiling:478},{expiresAt:Date.parse('2026-11-06T06:00:00Z')+1},{mode:'always-on'}])assert.throws(()=>reviewArm(f,bad),{code:'BUDGET_INVALID'});assert.throws(()=>f.arm({expiresAt:now+7200001}),{code:'BUDGET_INVALID'});reviewArm(f,{expiresAt:now+1000});f.tick(1001);assert.equal(f.state.livePermitted(),false);f.restart();assert.equal(f.state.policy().enabled,false);}finally{f.close();}
+ const missing=fixture();try{missing.import();assert.throws(()=>reviewArm(missing),{code:'BUDGET_INVALID'});}finally{missing.close();}
+});
+
+test('new or missing server version stops review and a subsequent rollback cannot resurrect the grant',()=>{
+ for(const changed of [nextReviewVersion,null]){const f=fixture({versionId:reviewVersion});try{f.import();reviewArm(f);f.restart(changed);assert.equal(f.state.livePermitted(),false);assert.equal(f.state.policy().publicBetaAuthorization,null);f.restart(reviewVersion);assert.equal(f.state.livePermitted(),false);assert.equal(f.state.usage('').total,214);}finally{f.close();}}
+});
+
+test('explicit stop and known transport failure remain stopped after same-version restart',async()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();reviewArm(f);f.state.stop();f.restart();assert.equal(f.state.livePermitted(),false);reviewArm(f);let calls=0;const native=createNativeTransport({apiKey,fetchImpl:async()=>{calls++;return new Response('',{status:503});}}),guard=new QlooGuard(f.state,{transport:native.search,verifiedSingleAttempt:true}),r=f.room();await assert.rejects(guard.execute(r.room,r.snapshot,query),{code:'UPSTREAM_FAILURE'});f.restart();assert.equal(f.state.livePermitted(),false);assert.equal(f.state.usage('').total,215);assert.equal(calls,1);}finally{f.close();}
+});
+
+test('crash with a reserved but unresolved send disables persistent review at startup without refund',()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();reviewArm(f);const r=f.room();f.state.reserve(r.room,r.snapshot,hash('review-crash'),hash(JSON.stringify(query)));assert.equal(f.state.usage('').total,215);f.restart();assert.equal(f.state.livePermitted(),false);assert.equal(f.state.operatorStatus().unsettled,1);assert.equal(f.state.usage('').total,215);assert.throws(()=>reviewArm(f),{code:'ARM_REVIEW_REQUIRED'});}finally{f.close();}
+});
+
+test('persistent review keeps exact cumulative accounting, cached jobs and hard stop across restart',async()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();reviewArm(f,{ceiling:215});let calls=0;const native=createNativeTransport({apiKey,fetchImpl:async()=>{calls++;return empty();}}),make=()=>new QlooGuard(f.state,{transport:native.search,verifiedSingleAttempt:true}),r=f.room();await make().execute(r.room,r.snapshot,query);f.tick(1001);f.restart();await make().execute(r.room,r.snapshot,query);assert.equal(calls,1);const other=f.room('FEDCBA');await assert.rejects(make().execute(other.room,other.snapshot,{...query,text:'Another fictional work'}),{code:'BUDGET_EXHAUSTED'});assert.equal(calls,1);assert.equal(f.state.usage('').total,215);}finally{f.close();}
+});
+
+test('persistent review does not replenish per-day or per-room slots at restart',async()=>{
+ for(const limit of ['daily','room']){const f=fixture({versionId:reviewVersion});try{f.import();reviewArm(f,{[limit]:1});let calls=0;const native=createNativeTransport({apiKey,fetchImpl:async()=>{calls++;return empty();}}),make=()=>new QlooGuard(f.state,{transport:native.search,verifiedSingleAttempt:true}),r=f.room();await make().execute(r.room,r.snapshot,query);f.tick(1001);f.restart();const second=limit==='room'?r:f.room('FEDCBA');await assert.rejects(make().execute(second.room,second.snapshot,{...query,text:'Second fictional work'}),{code:'BUDGET_EXHAUSTED'});assert.equal(calls,1);assert.equal(f.state.usage('').total,215);}finally{f.close();}}
+});
+
+
+test('a committed failure without a stop write cannot resume review after restart',()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();reviewArm(f);const r=f.room();const attempt=f.state.reserve(r.room,r.snapshot,hash('split-failure-write'),hash(JSON.stringify(query)));f.state.finish(attempt.id,'failed',{errorCode:'SYNTHETIC_FAILURE'});assert.equal(f.state.policy().enabled,true);f.restart();assert.equal(f.state.livePermitted(),false);assert.equal(f.state.usage('').total,215);f.tick(1001);reviewArm(f);f.restart();assert.equal(f.state.livePermitted(),true);assert.equal(f.state.usage('').total,215);}finally{f.close();}
 });

@@ -28,13 +28,15 @@ npm run cloudflare:check
 
 ## How Qloo contributes
 
-The server searches for a work title, the participant selects the exact entity, and Qloo returns feature tags for that work plus related works from two other domains. Every item retains its source work and tag. Tags on a related work describe that work rather than explaining why it matched. Participants choose which prompts to include. Nicknames and personal words are never sent to Qloo.
+The server searches for a work title, the participant selects the exact entity, and Qloo returns feature tags for that work plus related works from two other domains. Every item retains its source work and tag. Tags on a related work describe that work rather than explaining why it matched. Participants choose which prompts to include, and a card made only from a participant's own words is complete. Nicknames and personal words are never sent to Qloo.
 
-The hosted runtime runs on Cloudflare Workers with a single SQLite-backed Durable Object. API keys remain Worker secrets. Every outgoing Qloo call reserves a budget slot before dispatch under cumulative (up to 1,000), daily, and per-room caps, using fixed endpoints, bounded responses, and no automatic retries. Cookie sessions, single-use 1-hour host invitations, 256-bit participant links, salted host passwords, same-origin/CSRF checks, and 2-hour room expiry protect room data.
+The hosted runtime runs on Cloudflare Workers with a single SQLite-backed Durable Object. API keys remain Worker secrets. Every outbound Qloo call reserves a budget slot before sending, with no retries or refunds, under an owner-authorized 1,000-call lifetime maximum, a 200-call daily cap, and a 30-call per-room cap. Cookie sessions, single-use 1-hour host invitations, bounded review invitations, 256-bit participant links, salted host passwords, same-origin/CSRF checks, and 2-hour room expiry protect room data.
 
 ## Deployment
 
-Update `wrangler.jsonc` with your own account settings and exact HTTPS origin before deploying; the repository file is a template rather than the operator's live configuration. See `docs/deployment.md` for required bindings and operational rules. The hosted review URL is https://common-ground-test.studio-gennai1.workers.dev/ . Standard host invitations are single-use. Private review invitations can create a bounded number of rooms until a fixed expiry; they do not open other rooms or enable Qloo. Live Qloo activation remains a separately arranged, operator-enabled window of at most two hours, with startup off. See [judging instructions](docs/judging.md).
+Update `wrangler.jsonc` with your own account settings and exact HTTPS origin before deploying; the repository file is a template rather than the operator's live configuration. A fresh deployment runs the complete card flow with Qloo off by default (`session` mode is startup-off and limited to two hours when armed). See [`docs/deployment.md`](docs/deployment.md) for required bindings, version-bound activation rules, and recovery procedures.
+
+The hosted review deployment at https://common-ground-test.studio-gennai1.workers.dev/ uses a deployment-specific `invited-review` grant activated by the operator through November 6, 2026, 15:00 JST (06:00 UTC) within a 477-call cumulative ceiling (including 237 historical calls); this hosted grant is not automatic for forks or new deployments, and lookups can still stop on quota exhaustion or runtime failure. See [judging instructions](docs/judging.md).
 
 ## License
 
