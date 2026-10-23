@@ -1,0 +1,18 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+node_modules/
+.next/
+dist/
+coverage/
+.claude/settings.local.json
+tools/bin/
+
+.wrangler/
+.dev.vars
+.dev.vars.*
+wrangler-debug.log
+
+# Portable offline preview / personal development state
+.common-ground/

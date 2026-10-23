@@ -1,0 +1,23 @@
+import http from 'node:http';
+import assert from 'node:assert/strict';
+import {SecurityState,snapshotHash} from '../../scripts/security-state.mjs';
+import {BetaSecurity,validateDeployment,POLICY_VERSION,authorizePublicQloo} from '../../scripts/beta-security.mjs';
+import {createApp} from '../../scripts/serve.mjs';
+import {QlooGuard} from '../../scripts/qloo-guard.mjs';
+const config=()=>({publicOrigin:'https://workshop.test',statePath:'/fixture/private/beta.sqlite',qlooHome:'/fixture/private/public-qloo',operatorName:'Fictional test operator',contact:'fixture@workshop.test',hostingProvider:'Test fixture',hostingRegion:'Fictional test region',logRetentionDays:0,backupRetentionDays:0,reviewedPolicyVersion:POLICY_VERSION,hostingControlsVerified:true,edgeControlsVerified:true,qlooPublicUseConfirmed:true,qlooTermsReviewed:true,providerBudgetVerified:true,expectedLedgerId:'L'.repeat(43),minimumLifetimeSpent:0,ledgerBaselineVerified:true});
+const ep=(id,action='')=>'/api/gather/'+id+(action?'/'+action:'');
+const deferred=()=>{let resolve;const promise=new Promise(r=>resolve=r);return {resolve,promise};};
+async function fixture({publicMode=true,transport}={}){
+ let now=Date.now();const state=new SecurityState(':memory:',{now:()=>now}),guard=new QlooGuard(state,{verifiedSingleAttempt:true,transport});
+ new BetaSecurity(state,{preview:true});state.configure({betaSecurity:{...state.policy().betaSecurity,ledgerId:'L'.repeat(43)}});
+ const app=createApp({state,guard,deployment:publicMode?config():{preview:true}});await new Promise(r=>app.server.listen(0,'127.0.0.1',r));const base='http://127.0.0.1:'+app.server.address().port,origin=publicMode?config().publicOrigin:base;
+ async function request(route,{jar,data,view='participant',headers={}}={}){const payload=data===undefined?null:JSON.stringify(data);return new Promise((resolve,reject)=>{const req=http.request(base+route,{method:payload===null?'GET':'POST',headers:{...(publicMode?{Host:'workshop.test','X-Forwarded-Proto':'https','X-Real-IP':'198.51.100.10'}:{}),'X-CG-View':view,...(jar?{Cookie:jar.cookie}:{}),...(payload===null?{}:{Origin:origin,'Content-Type':'application/json','Content-Length':Buffer.byteLength(payload),'X-CG-CSRF':jar?.csrf||''}),...headers}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>{let body;const raw=Buffer.concat(chunks).toString();try{body=JSON.parse(raw);}catch{body=raw;}resolve({status:res.statusCode,body,headers:new Headers(res.headers)});});});req.on('error',reject);req.end(payload);});}
+ async function partial(route,{jar,data}){const payload=JSON.stringify(data),observed=deferred();app.server.once('request',()=>observed.resolve());let req;const result=new Promise((resolve,reject)=>{req=http.request(base+route,{method:'POST',headers:{Host:'workshop.test','X-Forwarded-Proto':'https','X-Real-IP':'198.51.100.10',Origin:origin,'Content-Type':'application/json','Content-Length':Buffer.byteLength(payload),'X-CG-CSRF':jar.csrf,Cookie:jar.cookie}},res=>{const chunks=[];res.on('data',c=>chunks.push(c));res.on('end',()=>resolve({status:res.statusCode,body:JSON.parse(Buffer.concat(chunks).toString())}));});req.on('error',reject);req.write(payload.slice(0,1));});await observed.promise;return {finish:()=>req.end(payload.slice(1)),result};}
+ async function ticket(){const r=await request('/api/session',{data:{}});assert.equal(r.status,200,JSON.stringify(r.body));return {cookie:r.headers.get('set-cookie').split(';')[0],csrf:r.body.csrf};}
+ async function create(host,{invite=app.beta.issueInvite(),...data}={}){const r=await request('/api/gather',{jar:host,view:'host',data:{flow:'cards',hostPassword:'fixture-only-passphrase',title:'Fixture room',size:3,policyVersion:POLICY_VERSION,hostInvite:invite,...data}});assert.equal(r.status,201,JSON.stringify(r.body));return r.body.id;}
+ async function admit(id,host,person){const r=await request(ep(id),{jar:host,view:'host'});assert.equal(r.status,200);const invitation=r.body.beta.participantKey;const a=await request(ep(id,'access'),{jar:person,data:{invitation}});assert.equal(a.status,200);return invitation;}
+ async function join(id,person,name='Nickname'){const r=await request(ep(id,'join'),{jar:person,data:{name,policyVersion:POLICY_VERSION}});assert.equal(r.status,201,JSON.stringify(r.body));return r.body;}
+ return {...app,request,partial,ticket,create,admit,join,tick:n=>now+=n,arm:values=>authorizePublicQloo(state,config(),{ceiling:20,daily:20,room:20,expiresAt:now+3600000,confirmation:'PUBLIC_QLOO_BUDGET_CONFIRMED',...values}),close:async()=>{app.server.closeAllConnections();await new Promise(r=>app.server.close(r));state.close();}};
+}
+
+export {config,ep,deferred,fixture};

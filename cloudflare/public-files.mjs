@@ -1,0 +1,2 @@
+export const assets=new Set(['/gather.html','/gather.css','/gather.js','/gather-state.js','/gather-i18n.js','/gather-cards-copy.js','/gather-cards-copy.en.js','/gather-policy-copy.js','/qloo-feature-labels.js','/qloo-feature-labels.en.js']);
+export const page=p=>['/','/terms','/privacy','/credits'].includes(p)||/^\/(?:facilitate\/(?:new|[A-Fa-f0-9]{6})|enter\/[A-Fa-f0-9]{6}|my\/[A-Fa-f0-9]{6}|circle\/[A-Fa-f0-9]{6})\/?$/.test(p);
