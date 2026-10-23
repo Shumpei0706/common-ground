@@ -10,10 +10,10 @@ import {createNativeTransport} from '../cloudflare/qloo-fetch.mjs';
 import {QlooGuard} from '../scripts/qloo-guard.mjs';
 import {cloudRuntime} from '../cloudflare/runtime.mjs';
 const now=Date.parse('2026-10-22T03:00:00Z'),origin='https://workshop.test',id='b'.repeat(64),apiKey='fictional-private-key';
-function fixture({versionId=null}={}){
- const source=new SecurityState(':memory:',{now:()=>now});new BetaSecurity(source,{preview:true});
+function fixture({versionId=null,at=now}={}){
+ const source=new SecurityState(':memory:',{now:()=>at});new BetaSecurity(source,{preview:true});
  for(let n=1;n<=214;n++)source.db.prepare('INSERT INTO attempts(id,job,room,day,start,state,result) VALUES (?,?,?,?,?,?,?)').run(n,hash('historical-'+n),'OLD123','2026-10-15',Date.parse('2026-10-15T00:00:00Z')+n*1000,'success',JSON.stringify({participantName:'DO_NOT_EXPORT',entities:[{title:'PRIVATE_HISTORY'}]}));
- const manifest=retireAndExport(source,{targetOrigin:origin,targetObjectId:id}),baselineHash=hash(JSON.stringify(manifest)),db=new DatabaseSync(':memory:');let clock=now;
+ const manifest=retireAndExport(source,{targetOrigin:origin,targetObjectId:id}),baselineHash=hash(JSON.stringify(manifest)),db=new DatabaseSync(':memory:');let clock=at;
  const options={id,origin,baselineHash,versionId,now:()=>clock};let state=new CloudState(db,options);new BetaSecurity(state,{preview:true});
  return {source,manifest,db,get state(){return state;},baselineHash,import(){return state.importBudget(manifest);},arm(extra={}){return state.arm({confirmation:'ARM_CLOUD_QLOO_CUMULATIVE_1000',bootNonce:state.bootNonce,manifestHash:baselineHash,observedSpent:state.usage('').total,observedDaily:state.usage('').daily,ceiling:1000,daily:200,room:30,expiresAt:clock+7200000,...extra});},room(code='ABCDEF'){const r={id:code,created:clock,snapshot:[]};state.saveRoom(r);state.grant(code,snapshotHash(r),{cap:30,expires:clock+7200000});return {room:code,snapshot:snapshotHash(r)};},tick(ms){clock+=ms;},restart(nextVersion=options.versionId){options.versionId=nextVersion;state=new CloudState(db,options);},close(){source.close();db.close();}};
 }
@@ -90,7 +90,7 @@ test('display counts refresh on timeout, UTC day change and runtime restart',()=
 });
 
 const reviewVersion='11111111-1111-4111-8111-111111111111',nextReviewVersion='22222222-2222-4222-8222-222222222222';
-const reviewArm=(f,extra={})=>f.arm({mode:'invited-review',versionId:reviewVersion,ceiling:477,expiresAt:now+7*86400000,...extra});
+const reviewArm=(f,extra={})=>f.arm({mode:'invited-review',confirmation:'ARM_CLOUD_QLOO_CUMULATIVE_2000',versionId:reviewVersion,ceiling:2000,expiresAt:now+7*86400000,...extra});
 
 test('invited review survives same-version eviction and exceeds two hours only within approved bounds',()=>{
  const f=fixture({versionId:reviewVersion});try{f.import();assert.equal(reviewArm(f).enabled,true);const nonce=f.state.bootNonce;f.tick(7200001);f.restart();assert.notEqual(f.state.bootNonce,nonce);assert.equal(f.state.livePermitted(),true);assert.equal(f.state.operatorStatus().activationMode,'invited-review');assert.equal(f.state.operatorStatus().versionId,reviewVersion);assert.equal(f.state.usage('').total,214);}finally{f.close();}
@@ -101,7 +101,7 @@ test('session mode remains boot-bound even when a valid Worker version is config
 });
 
 test('invited review requires the server version and rejects unapproved ceilings, modes and deadlines',()=>{
- const f=fixture({versionId:reviewVersion});try{f.import();for(const bad of [{versionId:null},{versionId:nextReviewVersion},{ceiling:478},{expiresAt:Date.parse('2026-11-06T06:00:00Z')+1},{mode:'always-on'}])assert.throws(()=>reviewArm(f,bad),{code:'BUDGET_INVALID'});assert.throws(()=>f.arm({expiresAt:now+7200001}),{code:'BUDGET_INVALID'});reviewArm(f,{expiresAt:now+1000});f.tick(1001);assert.equal(f.state.livePermitted(),false);f.restart();assert.equal(f.state.policy().enabled,false);}finally{f.close();}
+ const f=fixture({versionId:reviewVersion});try{f.import();for(const bad of [{versionId:null},{versionId:nextReviewVersion},{ceiling:2001},{expiresAt:Date.parse('2026-11-17T06:00:00Z')+1},{mode:'always-on',confirmation:'ARM_CLOUD_QLOO_CUMULATIVE_1000'}])assert.throws(()=>reviewArm(f,bad),{code:'BUDGET_INVALID'});assert.throws(()=>f.arm({expiresAt:now+7200001}),{code:'BUDGET_INVALID'});reviewArm(f,{expiresAt:now+1000});f.tick(1001);assert.equal(f.state.livePermitted(),false);f.restart();assert.equal(f.state.policy().enabled,false);}finally{f.close();}
  const missing=fixture();try{missing.import();assert.throws(()=>reviewArm(missing),{code:'BUDGET_INVALID'});}finally{missing.close();}
 });
 
@@ -128,4 +128,25 @@ test('persistent review does not replenish per-day or per-room slots at restart'
 
 test('a committed failure without a stop write cannot resume review after restart',()=>{
  const f=fixture({versionId:reviewVersion});try{f.import();reviewArm(f);const r=f.room();const attempt=f.state.reserve(r.room,r.snapshot,hash('split-failure-write'),hash(JSON.stringify(query)));f.state.finish(attempt.id,'failed',{errorCode:'SYNTHETIC_FAILURE'});assert.equal(f.state.policy().enabled,true);f.restart();assert.equal(f.state.livePermitted(),false);assert.equal(f.state.usage('').total,215);f.tick(1001);reviewArm(f);f.restart();assert.equal(f.state.livePermitted(),true);assert.equal(f.state.usage('').total,215);}finally{f.close();}
+});
+
+
+test('cloud-only 2000 ceiling reserves the last historical-inclusive slot once across restart and day changes',async()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();
+  f.state.transaction(()=>{for(let n=215;n<=1999;n++)f.db.prepare('INSERT INTO attempts(id,job,room,day,start,state,result) VALUES (?,?,?,?,?,?,?)').run(n,hash('synthetic-spent-'+n),'OLD123','2026-10-15',Date.parse('2026-10-15T00:00:00Z')+n,'success','{}');});
+  assert.throws(()=>reviewArm(f,{confirmation:'ARM_CLOUD_QLOO_CUMULATIVE_1000'}),{code:'ARM_REVIEW_REQUIRED'});assert.equal(reviewArm(f,{expiresAt:Date.parse('2026-11-17T06:00:00Z')}).enabled,true);
+  let calls=0;const transport=createNativeTransport({apiKey,fetchImpl:async()=>{calls++;return empty();}}),r=f.room(),other=f.room('FEDCBA'),guard=new QlooGuard(f.state,{transport:transport.search,verifiedSingleAttempt:true});
+  const results=await Promise.allSettled([guard.execute(r.room,r.snapshot,query),guard.execute(other.room,other.snapshot,{...query,text:'Other fictional work'})]);assert.equal(results.filter(x=>x.status==='fulfilled').length,1);assert.equal(calls,1);assert.equal(f.state.usage('').total,2000);
+  f.tick(86400001);f.restart();const next=f.room('CDEFAB');await assert.rejects(new QlooGuard(f.state,{transport:transport.search,verifiedSingleAttempt:true}).execute(next.room,next.snapshot,{...query,text:'After new day'}),{code:'BUDGET_EXHAUSTED'});assert.equal(calls,1);assert.equal(f.state.usage('').total,2000);assert.throws(()=>f.state.configure({total:2001}),{code:'LEDGER_POLICY'});
+ }finally{f.close();}
+ const local=new SecurityState(':memory:');try{assert.throws(()=>local.configure({total:1001}),{code:'LEDGER_POLICY'});}finally{local.close();}
+});
+
+test('invited review spans the judging period but stops at the exact November17 boundary',()=>{
+ const f=fixture({versionId:reviewVersion});try{f.import();const end=Date.parse('2026-11-17T06:00:00Z');assert.equal(reviewArm(f,{expiresAt:end}).enabled,true);f.tick(25*86400000);f.restart();assert.equal(f.state.livePermitted(),true);f.tick(end-now-25*86400000);assert.equal(f.state.livePermitted(),false);f.restart();assert.equal(f.state.policy().enabled,false);assert.throws(()=>f.arm({ceiling:1001}),{code:'BUDGET_INVALID'});}finally{f.close();}
+});
+
+
+test('cloud 30-day bound is enforced independently of the later fixed judging deadline',()=>{
+ const at=Date.parse('2026-10-16T03:00:00Z'),end=at+30*86400000,f=fixture({versionId:reviewVersion,at});try{f.import();assert(end<Date.parse('2026-11-17T06:00:00Z'));assert.throws(()=>reviewArm(f,{expiresAt:end+1}),{code:'BUDGET_INVALID'});assert.equal(reviewArm(f,{expiresAt:end}).enabled,true);const beta=new BetaSecurity(f.state,{preview:true});assert.throws(()=>beta.issueReviewInvite({expiresAt:end+1}),{code:'INVITE_INVALID'});const invitation=beta.issueReviewInvite({expiresAt:at+86400000,maxRooms:8});f.tick(1001);assert.throws(()=>beta.extendReviewInvite({invitation,expiresAt:end+1}),{code:'INVITE_INVALID'});assert.equal(beta.extendReviewInvite({invitation,expiresAt:end}).expiresAt,end);assert.equal(f.state.policy().betaSecurity.reviewInvites[0].issuedAt,at);}finally{f.close();}
 });

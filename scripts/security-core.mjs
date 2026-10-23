@@ -21,6 +21,8 @@ export class SecurityCore {
    CREATE TABLE IF NOT EXISTS creation_events (session TEXT NOT NULL, time INTEGER NOT NULL);`);
   this.db.prepare('INSERT OR IGNORE INTO config VALUES (1,?)').run(JSON.stringify(DEFAULT_POLICY));
  }
+ maximumTotal(){return 1000;}
+ reviewInviteDeadline(issuedAt){return issuedAt+21*86400000;}
  transaction(fn){
   // Nested synchronous domain operations join the outer atomic transaction.
   // SQLite BEGIN cannot be nested; the outermost operation owns commit/rollback.
@@ -30,7 +32,7 @@ export class SecurityCore {
   finally{this.transactionDepth=0;}
  }
  policy(){const row=this.db.prepare('SELECT policy FROM config WHERE id=1').get();deny(row,503,'LEDGER_POLICY','安全設定を確認できません。');let p;try{p=JSON.parse(row.policy);}catch{throw new GuardError(503,'LEDGER_POLICY','安全設定を確認できません。');}
-  deny(typeof p.enabled==='boolean'&&typeof p.confirmedFree==='boolean'&&[p.total,p.daily,p.room,p.intervalMs,p.sessionHours].every(v=>Number.isSafeInteger(v)&&v>0)&&p.total<=1000&&p.daily<=200&&p.room<=30&&p.intervalMs>=1000&&p.sessionHours<=24,503,'LEDGER_POLICY','安全設定が範囲外です。');return p;}
+  deny(typeof p.enabled==='boolean'&&typeof p.confirmedFree==='boolean'&&[p.total,p.daily,p.room,p.intervalMs,p.sessionHours].every(v=>Number.isSafeInteger(v)&&v>0)&&p.total<=this.maximumTotal()&&p.daily<=200&&p.room<=30&&p.intervalMs>=1000&&p.sessionHours<=24,503,'LEDGER_POLICY','安全設定が範囲外です。');return p;}
  configure(update){return this.transaction(()=>{const p={...this.policy(),...update};const old=this.db.prepare('SELECT policy FROM config WHERE id=1').get().policy;this.db.prepare('UPDATE config SET policy=? WHERE id=1').run(JSON.stringify(p));try{this.policy();}catch(e){this.db.prepare('UPDATE config SET policy=? WHERE id=1').run(old);throw e;}return p;});}
  session(cookie){if(!/^[a-f0-9]{64}$/.test(cookie||''))return null;const row=this.db.prepare('SELECT digest,csrf,expires FROM sessions WHERE digest=? AND expires>?').get(hash(cookie),this.now());return row||null;}
  issue(existing,{provisional=false}={}){const old=this.session(existing);if(old)return {session:old,cookie:null};return this.transaction(()=>{

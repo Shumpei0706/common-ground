@@ -40,11 +40,12 @@ export function cloudRuntime(db,{id,origin,operatorName,contact,baselineHash,api
   if(request.method==='POST')deny(request.headers.get('origin')===origin&&(!request.headers.get('sec-fetch-site')||request.headers.get('sec-fetch-site')==='same-origin'),403,'ORIGIN_DENIED','Same-origin requests are required.');
   if(url.pathname.startsWith('/api/operator/')){
    deny(request.method==='POST',405,'METHOD_DENIED','Unsupported method.');const auth=request.headers.get('authorization')||'';deny(typeof adminToken==='string'&&/^[a-f0-9]{64}$/.test(adminToken)&&same(auth,'Bearer '+adminToken),403,'HOST_REQUIRED','Operator access is required.');beta.rate(req,'operator-attempt',30,120);
-   const action=url.pathname.slice('/api/operator/'.length);deny(['invite','review-invite','revoke-review-invites','status','import','arm','stop'].includes(action),404,'API_MISSING','This operation is unavailable.');
+   const action=url.pathname.slice('/api/operator/'.length);deny(['invite','review-invite','extend-review-invite','revoke-review-invites','status','import','arm','stop'].includes(action),404,'API_MISSING','This operation is unavailable.');
    const data=action==='import'?await readBody(request,262144):await req.body();
    if(['invite','revoke-review-invites','status','stop'].includes(action))deny(Object.keys(data).length===0,400,'INPUT_INVALID','This operation takes an empty object.');
    if(action==='invite')json(res,200,{invitation:beta.issueInvite(),expiresInSeconds:3600});
    if(action==='review-invite'){deny(Object.keys(data).every(k=>['expiresAt','maxRooms'].includes(k)),400,'INPUT_INVALID','Unexpected review invitation option.');const invitation=beta.issueReviewInvite(data);json(res,200,{invitation,expiresAt:data.expiresAt,maxRooms:data.maxRooms??8});}
+   if(action==='extend-review-invite'){deny(Object.keys(data).every(k=>['invitation','expiresAt'].includes(k)),400,'INPUT_INVALID','Unexpected review invitation option.');json(res,200,beta.extendReviewInvite(data));}
    if(action==='revoke-review-invites'){beta.revokeReviewInvites();json(res,200,{revoked:true});}
    if(action==='status')json(res,200,{...state.operatorStatus(),connected:transport.ready,qlooResponse:transport.quotaObservation()});
    if(action==='import'){deny(Object.keys(data).length===1&&data.manifest,400,'IMPORT_INVALID','A baseline manifest is required.');json(res,200,state.importBudget(data.manifest));}
